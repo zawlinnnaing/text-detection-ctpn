@@ -3,23 +3,26 @@ import os
 import sys
 import time
 
+sys.path.append(os.getcwd())
+
+from utils.dataset import data_provider as data_provider
+from nets import model_train as model
+
+from tensorflow.contrib import slim
 import tensorflow as tf
 
-sys.path.append(os.getcwd())
-from tensorflow.contrib import slim
-from nets import model_train as model
-from utils.dataset import data_provider as data_provider
+PROJECT_ROOT = os.getcwd()
 
 tf.app.flags.DEFINE_float('learning_rate', 1e-5, '')
 tf.app.flags.DEFINE_integer('max_steps', 50000, '')
 tf.app.flags.DEFINE_integer('decay_steps', 30000, '')
-tf.app.flags.DEFINE_integer('decay_rate', 0.1, '')
+tf.app.flags.DEFINE_float('decay_rate', 0.1, '')
 tf.app.flags.DEFINE_float('moving_average_decay', 0.997, '')
 tf.app.flags.DEFINE_integer('num_readers', 4, '')
 tf.app.flags.DEFINE_string('gpu', '0', '')
 tf.app.flags.DEFINE_string('checkpoint_path', 'checkpoints_mlt/', '')
 tf.app.flags.DEFINE_string('logs_path', 'logs_mlt/', '')
-tf.app.flags.DEFINE_string('pretrained_model_path', 'data/vgg_16.ckpt', '')
+tf.app.flags.DEFINE_string('pretrained_model_path', 'data/checkpoint/vgg_16.ckpt', '')
 tf.app.flags.DEFINE_boolean('restore', True, '')
 tf.app.flags.DEFINE_integer('save_checkpoint_steps', 2000, '')
 FLAGS = tf.app.flags.FLAGS
@@ -33,11 +36,14 @@ def main(argv=None):
     if not os.path.exists(FLAGS.checkpoint_path):
         os.makedirs(FLAGS.checkpoint_path)
 
-    input_image = tf.placeholder(tf.float32, shape=[None, None, None, 3], name='input_image')
+    input_image = tf.placeholder(
+        tf.float32, shape=[None, None, None, 3], name='input_image')
     input_bbox = tf.placeholder(tf.float32, shape=[None, 5], name='input_bbox')
-    input_im_info = tf.placeholder(tf.float32, shape=[None, 3], name='input_im_info')
+    input_im_info = tf.placeholder(
+        tf.float32, shape=[None, 3], name='input_im_info')
 
-    global_step = tf.get_variable('global_step', [], initializer=tf.constant_initializer(0), trainable=False)
+    global_step = tf.get_variable(
+        'global_step', [], initializer=tf.constant_initializer(0), trainable=False)
     learning_rate = tf.Variable(FLAGS.learning_rate, trainable=False)
     tf.summary.scalar('learning_rate', learning_rate)
     opt = tf.train.AdamOptimizer(learning_rate)
@@ -48,7 +54,8 @@ def main(argv=None):
             bbox_pred, cls_pred, cls_prob = model.model(input_image)
             total_loss, model_loss, rpn_cross_entropy, rpn_loss_box = model.loss(bbox_pred, cls_pred, input_bbox,
                                                                                  input_im_info)
-            batch_norm_updates_op = tf.group(*tf.get_collection(tf.GraphKeys.UPDATE_OPS, scope))
+            batch_norm_updates_op = tf.group(
+                *tf.get_collection(tf.GraphKeys.UPDATE_OPS, scope))
             grads = opt.compute_gradients(total_loss)
 
     apply_gradient_op = opt.apply_gradients(grads, global_step=global_step)
@@ -61,7 +68,8 @@ def main(argv=None):
         train_op = tf.no_op(name='train_op')
 
     saver = tf.train.Saver(tf.global_variables(), max_to_keep=100)
-    summary_writer = tf.summary.FileWriter(FLAGS.logs_path + StyleTime, tf.get_default_graph())
+    summary_writer = tf.summary.FileWriter(
+        FLAGS.logs_path + StyleTime, tf.get_default_graph())
 
     init = tf.global_variables_initializer()
 
@@ -77,6 +85,7 @@ def main(argv=None):
     with tf.Session(config=config) as sess:
         if FLAGS.restore:
             ckpt = tf.train.latest_checkpoint(FLAGS.checkpoint_path)
+
             restore_step = int(ckpt.split('.')[0].split('_')[-1])
             print("continue training from previous checkpoint {}".format(restore_step))
             saver.restore(sess, ckpt)
@@ -98,7 +107,8 @@ def main(argv=None):
             summary_writer.add_summary(summary_str, global_step=step)
 
             if step != 0 and step % FLAGS.decay_steps == 0:
-                sess.run(tf.assign(learning_rate, learning_rate.eval() * FLAGS.decay_rate))
+                sess.run(tf.assign(learning_rate,
+                                   learning_rate.eval() * FLAGS.decay_rate))
 
             if step % 10 == 0:
                 avg_time_per_step = (time.time() - start) / 10

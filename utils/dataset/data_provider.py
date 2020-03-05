@@ -1,12 +1,14 @@
 # encoding:utf-8
+from utils.dataset.data_util import GeneratorEnqueuer
+import numpy as np
 import os
 import time
 
 import cv2
-import matplotlib.pyplot as plt
-import numpy as np
+import matplotlib
+matplotlib.use('TkAgg')
 
-from utils.dataset.data_util import GeneratorEnqueuer
+import matplotlib.pyplot as plt
 
 DATA_FOLDER = "data/dataset/mlt/"
 
@@ -61,7 +63,8 @@ def generator(vis=False):
 
                 if vis:
                     for p in bbox:
-                        cv2.rectangle(im, (p[0], p[1]), (p[2], p[3]), color=(0, 0, 255), thickness=1)
+                        cv2.rectangle(im, (p[0], p[1]), (p[2], p[3]), color=(
+                            0, 0, 255), thickness=1)
                     fig, axs = plt.subplots(1, 1, figsize=(30, 30))
                     axs.imshow(im[:, :, ::-1])
                     axs.set_xticks([])
@@ -78,7 +81,8 @@ def generator(vis=False):
 
 def get_batch(num_workers, **kwargs):
     try:
-        enqueuer = GeneratorEnqueuer(generator(**kwargs), use_multiprocessing=True)
+        enqueuer = GeneratorEnqueuer(
+            generator(**kwargs), use_multiprocessing=True)
         enqueuer.start(max_queue_size=24, workers=num_workers)
         generator_output = None
         while True:

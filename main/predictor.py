@@ -28,7 +28,7 @@ def name_from_path(file_path: str):
     return os.path.basename(os.path.splitext(file_path)[0])
 
 
-def get_images():
+# def get_images():
     files = []
     exts = ['jpg', 'png', 'jpeg', 'JPG']
     for parent, dirnames, filenames in os.walk(FLAGS.test_data_path):
@@ -85,21 +85,19 @@ def text_extraction(image, image_name, x, y, x2, y2, output_dir):
         print("Image is too small. Discarded image {}".format(image_name))
         return
     size = (1024, 28)
-    # gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)  # grayscale
 
     # _, im_bw = cv2.threshold(
-    #     gray, 150, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)
+    #     gray, 110, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+    # kernel = cv2.getStructuringElement(cv2.MORPH_CROSS, (3, 3))
+    # im_bw = cv2.dilate(im_bw, kernel, iterations=1)  # dilate
+    # im_bw = cv2.erode(im_bw, kernel, iterations=1)  # erosion
     im_bw = transform_img(image)
-
-    # kernel = cv2.getStructuringElement(cv2.MORPH_CROSS, (6, 6))
-    # im_bw = cv2.dilate(im_bw, kernel, iterations=5)  # dilate
-    # im_bw = cv2.erode(im_bw, kernel, iterations=5) # erosion
     img = cv2.resize(im_bw, (1024, 28))
     img = img.astype(np.float32)
     img /= 255
 
     (x2, y2) = (x+w, y+h)
-    fname = "{0}x{1}_{2}x{3}_{4}.jpg".format(image_name, x, y, x2, y2)
+    fname = "{0}_{1}x{2}_{3}x{4}.jpg".format(image_name, x, y, x2, y2)
     file_name = os.path.join(output_dir, fname)
     cv2.imwrite(file_name, im_bw)
 
@@ -111,13 +109,12 @@ def text_extraction(image, image_name, x, y, x2, y2, output_dir):
     return (new_im)
 
 
-def main(argv=None):
-    if os.path.exists(FLAGS.output_path):
-        shutil.rmtree(FLAGS.output_path)
-    os.makedirs(FLAGS.output_path)
-    os.environ['CUDA_VISIBLE_DEVICES'] = FLAGS.gpu
+def predict(im_fn):
+    os.makedirs(cfg.OUTPUT_DIR, exist_ok=True)
+    os.environ['CUDA_VISIBLE_DEVICES'] = cfg.CHECKPOINT_PATH
 
     with tf.get_default_graph().as_default():
+        # Building Tensorflow Graph
         input_image = tf.placeholder(
             tf.float32, shape=[None, None, None, 3], name='input_image')
         input_im_info = tf.placeholder(
@@ -133,78 +130,60 @@ def main(argv=None):
         saver = tf.train.Saver(variable_averages.variables_to_restore())
 
         with tf.Session(config=tf.ConfigProto(allow_soft_placement=True)) as sess:
-            ckpt_state = tf.train.get_checkpoint_state(FLAGS.checkpoint_path)
-            model_path = os.path.join(FLAGS.checkpoint_path, os.path.basename(
+            # Computing TF graph
+            ckpt_state = tf.train.get_checkpoint_state(cfg.CHECKPOINT_PATH)
+            model_path = os.path.join(cfg.CHECKPOINT_PATH, os.path.basename(
                 ckpt_state.model_checkpoint_path))
             print('Restore from {}'.format(model_path))
             saver.restore(sess, model_path)
 
-            im_fn_list = get_images()
-            for im_fn in im_fn_list:
-                print("Making directory for storing cropped images ... ")
-                cropped_dir = os.path.join(
-                    "data/cropped-demo-images", name_from_path(im_fn))
-                os.makedirs(cropped_dir, exist_ok=True)
+            print("Making directory for storing cropped images ... ")
+            cropped_dir = os.path.join(
+                cfg.OUTPUT_DIR, name_from_path(im_fn))
+            os.makedirs(cropped_dir, exist_ok=True)
 
-                print('===============')
-                print(im_fn)
-                start = time.time()
-                try:
-                    im = cv2.imread(im_fn)[:, :, ::-1]
-                except:
-                    print("Error reading image {}!".format(im_fn))
-                    continue
+            print('===============')
+            print(im_fn)
+            start = time.time()
+            try:
+                im = cv2.imread(im_fn)[:, :, ::-1]
+            except:
+                print("Error reading image {}!".format(im_fn))
+                return
 
-                img, (rh, rw) = resize_image(im)
-                h, w, c = img.shape
-                im_info = np.array([h, w, c]).reshape([1, 3])
-                bbox_pred_val, cls_prob_val = sess.run([bbox_pred, cls_prob],
-                                                       feed_dict={input_image: [img],
-                                                                  input_im_info: im_info})
-                textsegs, _ = proposal_layer(
-                    cls_prob_val, bbox_pred_val, im_info)
-                scores = textsegs[:, 0]
-                textsegs = textsegs[:, 1:5]
+            img, (rh, rw) = resize_image(im)
+            h, w, c = img.shape
+            im_info = np.array([h, w, c]).reshape([1, 3])
+            bbox_pred_val, cls_prob_val = sess.run([bbox_pred, cls_prob],
+                                                   feed_dict={input_image: [img],
+                                                              input_im_info: im_info})
+        textsegs, _ = proposal_layer(
+            cls_prob_val, bbox_pred_val, im_info)
+        scores = textsegs[:, 0]
+        textsegs = textsegs[:, 1:5]
 
-                textdetector = TextDetector(DETECT_MODE='H')
-                boxes = textdetector.detect(
-                    textsegs, scores[:, np.newaxis], img.shape[:2])
+        textdetector = TextDetector(DETECT_MODE='H')
+        boxes = textdetector.detect(
+            textsegs, scores[:, np.newaxis], img.shape[:2])
 
-                boxes = np.array(boxes, dtype=np.int)
+        boxes = np.array(boxes, dtype=np.int)
 
-                cost_time = (time.time() - start)
-                print("cost time: {:.2f}s".format(cost_time))
+        cost_time = (time.time() - start)
+        print("cost time: {:.2f}s".format(cost_time))
 
-                for i, box in enumerate(boxes):
-                    # print("reshaped box", [box[:8].astype(
-                    #     np.int32).reshape((-1, 1, 2))])
-                    # cv2.polylines(img, [box[:8].astype(np.int32).reshape((-1, 1, 2))], True, color=(0, 255, 0),
-                    #               thickness=2)
-                    # Cropped image in bounding box and save in specified directory
-                    cropped_img, x_min, x_max, y_min, y_max = crop_bbox(
-                        box[:8], img)
-                    text_extraction(
-                        cropped_img, name_from_path(im_fn), x_min, y_min, x_max, y_max, cropped_dir)
-                    # cropped_img_filename = "{}_{}.jpg".format(
-                    #     name_from_path(im_fn), i)
-                    # print("Image write to ", os.path.join(
-                    #     cropped_dir, cropped_img_filename))
-                    # cv2.imwrite(os.path.join(
-                    #     cropped_dir, cropped_img_filename), cropped_img)
-                # img = cv2.resize(img, None, None, fx=1.0 / rh,
+        for i, box in enumerate(boxes):
+            # Cropped image in bounding box and save in specified directory
+            cropped_img, x_min, x_max, y_min, y_max = crop_bbox(
+                box[:8], img)
+            text_extraction(
+                cropped_img, name_from_path(im_fn), x_min, y_min, x_max, y_max, cropped_dir)
 
-                #                  fy=1.0 / rw, interpolation=cv2.INTER_LINEAR)
-                # cv2.imwrite(os.path.join(FLAGS.output_path,
-                #                          os.path.basename(im_fn)), img[:, :, ::-1])
+            # with open(os.path.join(cfg.OUTPUT_DIR, os.path.splitext(os.path.basename(im_fn))[0]) + ".txt",
+            #           "w") as f:
+            #     for i, box in enumerate(boxes):
+            #         line = ",".join(str(box[k]) for k in range(8))
+            #         line += "," + str(scores[i]) + "\r\n"
+            #         f.writelines(line)
+            # break
 
-                # with open(os.path.join(FLAGS.output_path, os.path.splitext(os.path.basename(im_fn))[0]) + ".txt",
-                #           "w") as f:
-                #     for i, box in enumerate(boxes):
-                #         line = ",".join(str(box[k]) for k in range(8))
-                #         line += "," + str(scores[i]) + "\r\n"
-                #         f.writelines(line)
-                break
-
-
-if __name__ == '__main__':
-    tf.app.run()
+        return cropped_dir
